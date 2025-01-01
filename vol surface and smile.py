@@ -39,15 +39,15 @@ for expiration in expirations:
         strike_data_dict[expiration] = strikes
         time_to_exp_dict[expiration] = calc_tte(expiration)
 
-strike_range = np.linspace(min([min(v) for v in strike_data_dict.values()]) / F, max([max(v) for v in strike_data_dict.values()]) / F, 100)
-time_range = np.linspace(min(time_to_exp_dict.values()), max(time_to_exp_dict.values()), 100)
+strike_range = np.linspace(min([min(v) for v in strike_data_dict.values()]) / F, max([max(v) for v in strike_data_dict.values()]) / F, 200)
+time_range = np.linspace(min(time_to_exp_dict.values()), max(time_to_exp_dict.values()), 200)
 strike_grid, time_grid = np.meshgrid(strike_range, time_range)
 
 vol_surface = griddata(
     [(k / F, t) for exp, ks in strike_data_dict.items() for k, t in zip(ks, [time_to_exp_dict[exp]] * len(ks))],
     [v for vs in vol_data_dict.values() for v in vs],
-    [strike_grid, time_grid],
-    method = 'linear'
+    (strike_grid, time_grid),
+    method='linear'
 )
 
 vol_surface = gaussian_filter(vol_surface, sigma=1.5)
@@ -56,7 +56,7 @@ fig = make_subplots(
     rows=2, cols=1,
     specs=[[{"type": "surface"}], [{"type": "scatter"}]],
     subplot_titles=["Volatility Surface", "Volatility Smile"],
-    row_heights=[0.7, 0.3]
+    row_heights=[0.75, 0.25]
 )
 
 fig.add_trace(
