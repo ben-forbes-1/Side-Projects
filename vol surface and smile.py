@@ -28,8 +28,10 @@ for expiration in expirations:
 
     calls = calls[(calls['volume'] > 0) & (calls['openInterest'] > 0) & (calls['strike'] > F)]
     puts = puts[(puts['volume'] > 0) & (puts['openInterest'] > 0) & (puts['strike'] < F)]
+
     options = pd.concat([calls, puts])
     options = options[options['impliedVolatility'] > 0]
+    options = options[options['strike'] < 2.5 * F]
 
     if not options.empty:
         strikes = options['strike'].to_numpy()
@@ -50,7 +52,7 @@ vol_surface = griddata(
     method='linear'
 )
 
-vol_surface = gaussian_filter(vol_surface, sigma=1.5)
+vol_surface = gaussian_filter(vol_surface, sigma=1.1)
 
 fig = make_subplots(
     rows=2, cols=1,
