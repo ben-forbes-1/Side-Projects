@@ -5,6 +5,8 @@ from plotly.subplots import make_subplots
 import yfinance as yf
 from scipy.interpolate import griddata
 from scipy.ndimage import gaussian_filter
+import warnings
+warnings.filterwarnings("ignore")
 
 def calc_tte(expiry):
     return (pd.to_datetime(expiry) - pd.Timestamp.today()).days / 365
@@ -58,7 +60,7 @@ fig = make_subplots(
     rows=2, cols=1,
     specs=[[{"type": "surface"}], [{"type": "scatter"}]],
     subplot_titles=["Volatility Surface", "Volatility Smile"],
-    row_heights=[0.75, 0.25]
+    row_heights=[1, 0.5]
 )
 
 fig.add_trace(
