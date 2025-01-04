@@ -8,6 +8,9 @@ from selenium.webdriver.support import expected_conditions as EC
 import csv
 from fake_useragent import UserAgent
 
+def calc_tte(expiry):
+    return (pd.to_datetime(expiry) - pd.Timestamp.today()).days / 365
+
 update = input("Do you want to update the option price data? (y/n): ")
 
 if update.lower() == "y":
@@ -30,16 +33,14 @@ if update.lower() == "y":
     options.add_experimental_option("prefs", prefs)
 
     ua = UserAgent()
-    options.add_argument(f"user-agent={ua.random}")
-
-    options.add_argument("--window-size=1920x1080")
-    options.add_argument("--headless=new")                                 # Run in headless mode to avoid opening a browser window
-    options.add_argument("--disable-blink-features=AutomationControlled")
-
-    options.add_argument("--disable-gpu")                                  # Prevent GPU acceleration
-    options.add_argument("--disable-software-rasterizer")                  # Further UI rendering disabling
-    options.add_argument("--disable-extensions")                           # Prevent extension issues
-    options.add_argument("--no-sandbox")                                   # For running inside containers
+    options.add_argument(f"user-agent={ua.random}")                       # Set a random user agent
+    options.add_argument("--window-size=1920x1080")                       # Set window size
+    options.add_argument("--headless=new")                                # Run in headless mode to avoid opening a browser window
+    options.add_argument("--disable-blink-features=AutomationControlled") # Disable automation control
+    options.add_argument("--disable-gpu")                                 # Prevent GPU acceleration
+    options.add_argument("--disable-software-rasterizer")                 # Further UI rendering disabling
+    options.add_argument("--disable-extensions")                          # Prevent extension issues
+    options.add_argument("--no-sandbox")                                  # For running inside containers
     options.add_argument("--disable-dev-shm-usage")
 
     driver = webdriver.Chrome(options=options)
@@ -178,7 +179,7 @@ if update.lower() == "y":
 
         combined_csv_path = "spx_options_combined.csv"
         if os.path.exists(combined_csv_path):
-            os.remove(combined_csv_path)
+            os.remove(combined_csv_path) # If the file already exists, delete it
         final_df.to_csv(combined_csv_path, index=False)
         print(f"Data saved to {combined_csv_path}")
 
@@ -193,3 +194,6 @@ if update.lower() == "y":
                     print(f"Error deleting file {file_path}: {e}")
     else:
         print("No valid data to save.")
+
+options_data = pd.read_csv("spx_options_combined.csv")
+
