@@ -1,10 +1,13 @@
 import os
+import numpy as np
 import time
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.action_chains import ActionChains
+from selenium.webdriver.common.keys import Keys
 import csv
 from fake_useragent import UserAgent
 
@@ -54,18 +57,34 @@ if update.lower() == "y":
 
     # Step 1: Select "All" from the dropdown
     try:
-        dropdown_xpath = "//div[contains(@class, 'ReactSelect__control')]"
-        option_xpath = "//div[contains(@class, 'ReactSelect__option') and text()='All']"
+        # Step 1: Dismiss cookies popup
+        reject_button_xpath = "//button[contains(@class, 'cky-btn-reject') and @aria-label='Reject All']"
+        reject_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, reject_button_xpath))
+        )
+        reject_button.click()
 
-        # Click the dropdown
-        dropdown = wait.until(EC.element_to_be_clickable((By.XPATH, dropdown_xpath)))
+        # Step 2: Locate and click the dropdown containing 'Near the Money'
+        dropdown_xpath = "//div[contains(@class, 'ReactSelect__control') and .//div[text()='Near the Money']]"
+        dropdown = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.XPATH, dropdown_xpath))
+        )
+        driver.execute_script("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", dropdown)
         dropdown.click()
-        time.sleep(1)
 
-        # Select "All" from the dropdown
-        option = wait.until(EC.element_to_be_clickable((By.XPATH, option_xpath)))
-        option.click()
-        print("Selected 'All' from the dropdown.")
+        # Step 3: Type 'All' directly and press Enter
+        actions = ActionChains(driver)
+        actions.send_keys("All")  # Type 'All'
+        actions.send_keys(Keys.RETURN)  # Press Enter
+        actions.perform()
+
+        # Step 4: Click 'View Chain' button
+        view_button_xpath = "//button[contains(@class, 'Button__StyledButton') and contains(@class, 'QuoteTableLayout___StyledButton')]"
+        view_button = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, view_button_xpath))
+        )
+        view_button.click()  # Attempt to click
+        print("Clicked 'View Chain' button.")
     except Exception as e:
         print(f"Error interacting with the dropdown: {e}")
 
@@ -126,7 +145,8 @@ if update.lower() == "y":
             # Break the loop if all buttons have been processed
             if len(processed_expirations) >= len(expiration_buttons):
                 break
-
+        except KeyboardInterrupt:
+            break
         except Exception as e:
             print(f"Error locating or processing expiration buttons: {e}")
             break
@@ -171,10 +191,7 @@ if update.lower() == "y":
     # Combine into a single DataFrame
     if len(all_data.index) != 0:
         final_df = all_data.copy()
-        final_df = final_df[final_df['Volume'] != 0]
-        final_df = final_df[final_df['Open Interest'] != 0]
         final_df['Expiration Date'] = pd.to_datetime(final_df['Expiration Date'], format = '%a %b %d %Y')
-        df = df[df['Expiration Date'] >= pd.Timestamp.today()]
         final_df = final_df.sort_values(by=['Expiration Date', 'Strike'])
 
         combined_csv_path = "spx_options_combined.csv"
@@ -196,4 +213,39 @@ if update.lower() == "y":
         print("No valid data to save.")
 
 options_data = pd.read_csv("spx_options_combined.csv")
+expiries = set(options_data["Expiration Date"])
 
+vol_data_dict = {exp: {} for exp in expiries}
+strike_data_dict = {exp: {} for exp in expiries}
+time_to_exp_dict = {exp: calc_tte(exp) for exp in expiries}
+F = float(idx_spot)
+no_volume = input("Do you want to include options with no volume/OI? (y/n): ")
+
+for expiry in expiries:
+    options = options_data[options_data['Expiration Date'] == expiry]
+    calls = options[options['Type'] == 'Call']
+    puts = options[options['Type'] == 'Put']
+
+    # OTM options
+    calls = calls[calls['Strike'] > F]
+    puts = puts[puts['Strike'] < F]
+
+    if no_volume.lower() == "n":
+        calls = calls[(calls['Volume'] > 0) & (calls['Open Interest'] > 0)]
+        puts = puts[(puts['Volume'] > 0) & (puts['Open Interest'] > 0)]
+
+    if not calls.empty:
+        strikes = calls['Strike'].to_numpy()
+        volatilities = calls['IV'].to_numpy()
+
+        vol_data_dict[expiry] = volatilities
+        strike_data_dict[expiry] = strikes
+    
+    if not puts.empty:
+        strikes = puts['Strike'].to_numpy()
+        volatilities = puts['IV'].to_numpy()
+
+        vol_data_dict[expiry] = volatilities
+        strike_data_dict[expiry] = strikes
+    
+strike_range = np.linspace(min([min(v) for v in strike_data_dict.values()]) / F, max([max(v) for v in strike_data_dict.values()]) / F, 200)
