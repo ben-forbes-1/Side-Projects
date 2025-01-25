@@ -1,88 +1,130 @@
-import os
 import numpy as np
-import time
 import pandas as pd
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.action_chains import ActionChains
-import csv
-from fake_useragent import UserAgent
+from scipy.optimize import minimize
+from scipy.interpolate import interp1d
+import matplotlib.pyplot as plt
+from scipy.stats import norm
 
-# Set up Selenium WebDriver with custom download directory
-options = webdriver.ChromeOptions()
-download_dir = "./cboe_csvs"  # Directory to save downloaded CSVs
-os.makedirs(download_dir, exist_ok=True)
+# Black-Scholes Call Price Function
+def black_scholes_call(F, K, T, r, sigma):
+    """
+    Calculate the Black-Scholes call option price.
 
-prefs = {
-    "download.default_directory": os.path.abspath(download_dir),      # Set download directory
-    "download.prompt_for_download": False,                            # Disable download prompts
-    "download.directory_upgrade": True,                               # Allow directory upgrades
-    "safebrowsing.enabled": True,                                     # Enable safe browsing
-    "profile.default_content_setting_values.automatic_downloads": 1,  # Allow multiple downloads
-    "profile.default_content_settings.popups": 0,                     # Disable popups
-    "download.open_pdf_in_system_reader": False,                      # Prevent PDF popup
-    "download.extensions_to_open": "",                                # Prevent any extensions from auto-opening
-    "download.shelf.enabled": False                                   # Disables the "Download Complete" notification popup
-}
-options.add_experimental_option("prefs", prefs)
+    Parameters:
+    F : float : Forward price of the underlying
+    K : float : Strike price
+    T : float : Time to expiration in years
+    r : float : Risk-free interest rate
+    sigma : float : Implied volatility
 
-ua = UserAgent()
-options.add_argument(f"user-agent={ua.random}")                       # Set a random user agent
-options.add_argument("--window-size=1920x1080")                       # Set window size
-# options.add_argument("--headless=new")                                # Run in headless mode to avoid opening a browser window
-options.add_argument("--disable-blink-features=AutomationControlled") # Disable automation control
-options.add_argument("--disable-gpu")                                 # Prevent GPU acceleration
-options.add_argument("--disable-software-rasterizer")                 # Further UI rendering disabling
-options.add_argument("--disable-extensions")                          # Prevent extension issues
-options.add_argument("--no-sandbox")                                  # For running inside containers
-options.add_argument("--disable-dev-shm-usage")
+    Returns:
+    float : Call option price
+    """
+    d1 = (np.log(F / K) + (0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    return np.exp(-r * T) * (F * norm.cdf(d1) - K * norm.cdf(d2))
 
-driver = webdriver.Chrome(options=options)
+# Risk-Neutral Density Function
+def compute_rnd(F, T, r, strikes, implied_vols):
+    """
+    Compute the Risk-Neutral Density (RND) using the second derivative of the call price.
 
-# Navigate to the Cboe SPX options page
-url = "https://www.cboe.com/delayed_quotes/spx/quote_table"
-driver.get(url)
+    Parameters:
+    F : float : Forward price of the underlying
+    T : float : Time to expiration in years
+    r : float : Risk-free interest rate
+    strikes : array : Array of strike prices
+    implied_vols : array : Array of implied volatilities
 
-# Wait for the page to load
-wait = WebDriverWait(driver, 15)
+    Returns:
+    tuple : (fine_strikes, rnd) where fine_strikes are the strike prices on a fine grid,
+            and rnd is the risk-neutral density.
+    """
+    # Remove duplicate strikes
+    strikes, implied_vols = remove_duplicates(strikes, implied_vols)
 
-from selenium.webdriver.common.keys import Keys
+    # Ensure the strikes and implied vols are sorted
+    sorted_indices = np.argsort(strikes)
+    strikes = strikes[sorted_indices]
+    implied_vols = implied_vols[sorted_indices]
 
-try:
-    # Step 1: Dismiss cookies popup
-    reject_button_xpath = "//button[contains(@class, 'cky-btn-reject') and @aria-label='Reject All']"
-    reject_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, reject_button_xpath))
-    )
-    reject_button.click()
-    print("Cookies popup dismissed.")
+    # Interpolate implied volatilities for smoothness
+    iv_interp = interp1d(strikes, implied_vols, kind='cubic', fill_value="extrapolate")
 
-    # Step 2: Locate and click the dropdown containing 'Near the Money'
-    dropdown_xpath = "//div[contains(@class, 'ReactSelect__control') and .//div[text()='Near the Money']]"
-    dropdown = WebDriverWait(driver, 15).until(
-        EC.element_to_be_clickable((By.XPATH, dropdown_xpath))
-    )
-    driver.execute_script("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", dropdown)
-    dropdown.click()
-    print("Clicked 'Options Range' dropdown containing 'Near the Money'.")
+    # Define a fine grid for strikes
+    fine_strikes = np.linspace(min(strikes), max(strikes), 500)
+    fine_vols = iv_interp(fine_strikes)
 
-    # Step 3: Type 'All' directly and press Enter
-    actions = ActionChains(driver)
-    actions.send_keys("All")  # Type 'All'
-    actions.send_keys(Keys.RETURN)  # Press Enter
-    actions.perform()
-    print("Typed 'All' and pressed Enter.")
+    # Compute option prices using Black-Scholes
+    call_prices = [black_scholes_call(F, K, T, r, sigma) for K, sigma in zip(fine_strikes, fine_vols)]
 
-    # Step 4: Click 'View Chain' button
-    view_button_xpath = "//button[contains(@class, 'Button__StyledButton') and contains(@class, 'QuoteTableLayout___StyledButton')]"
-    view_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, view_button_xpath))
-    )
-    view_button.click()  # Attempt to click
-    print("Clicked 'View Chain' button.")
-    time.sleep(30)
+    # First derivative (risk-neutral CDF)
+    dC_dK = np.gradient(call_prices, fine_strikes)
 
-except Exception as e:
-    print(f"Error: {e}")
+    # Second derivative (risk-neutral density)
+    d2C_dK2 = np.gradient(dC_dK, fine_strikes)
+
+    return fine_strikes, d2C_dK2
+
+def remove_duplicates(strikes, implied_vols):
+    """
+    Remove duplicate strikes by averaging implied volatilities for duplicates.
+
+    Parameters:
+    strikes : array : Strike prices
+    implied_vols : array : Implied volatilities
+
+    Returns:
+    tuple : (unique_strikes, unique_implied_vols)
+    """
+    unique_strikes = {}
+    for strike, iv in zip(strikes, implied_vols):
+        if strike in unique_strikes:
+            unique_strikes[strike].append(iv)
+        else:
+            unique_strikes[strike] = [iv]
+
+    averaged_strikes = []
+    averaged_vols = []
+    for strike, ivs in unique_strikes.items():
+        averaged_strikes.append(strike)
+        averaged_vols.append(np.mean(ivs))
+
+    return np.array(averaged_strikes), np.array(averaged_vols)
+
+
+# Main Workflow
+def main():
+    # Load the options data
+    options_data = pd.read_csv("spx_options_combined.csv")
+    idx_spot = float(options_data['Index Spot'].iloc[0])  # Underlying index spot price
+    r = 0.01  # Risk-free rate (adjust this as needed)
+
+    # Choose expiry
+    expiry_choice = input("Enter the desired expiry (e.g., 2025-01-19): ")
+    expiry_data = options_data[options_data['Expiration Date'] == expiry_choice]
+
+    if expiry_data.empty:
+        print("No data available for the chosen expiry.")
+        return
+
+    # Extract strikes and implied volatilities
+    strikes = expiry_data['Strike'].to_numpy()
+    implied_vols = expiry_data['IV'].to_numpy()
+    T = (pd.to_datetime(expiry_choice) - pd.Timestamp.today()).days / 365
+
+    # Compute Risk-Neutral Density
+    fine_strikes, rnd = compute_rnd(idx_spot, T, r, strikes, implied_vols)
+
+    # Plot the RND
+    plt.figure(figsize=(10, 6))
+    plt.plot(fine_strikes, rnd, label="Risk-Neutral Density", color='blue')
+    plt.title(f"Risk-Neutral Density for Expiry {expiry_choice}")
+    plt.xlabel("Strike Price")
+    plt.ylabel("Density")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+if __name__ == "__main__":
+    main()

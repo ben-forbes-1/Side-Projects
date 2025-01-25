@@ -10,6 +10,12 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.keys import Keys
 import csv
 from fake_useragent import UserAgent
+from scipy.interpolate import griddata
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from scipy.optimize import minimize
+import matplotlib.pyplot as plt
+
 
 def calc_tte(expiry):
     return (pd.to_datetime(expiry) - pd.Timestamp.today()).days / 365
@@ -193,6 +199,7 @@ if update.lower() == "y":
         final_df = all_data.copy()
         final_df['Expiration Date'] = pd.to_datetime(final_df['Expiration Date'], format = '%a %b %d %Y')
         final_df = final_df.sort_values(by=['Expiration Date', 'Strike'])
+        final_df['Index Spot'] = idx_spot
 
         combined_csv_path = "spx_options_combined.csv"
         if os.path.exists(combined_csv_path):
@@ -213,6 +220,10 @@ if update.lower() == "y":
         print("No valid data to save.")
 
 options_data = pd.read_csv("spx_options_combined.csv")
+options_data['TTE'] = (pd.to_datetime(options_data['Expiration Date']) - pd.Timestamp.today()).dt.days / 365
+options_data = options_data[options_data['Bid'] != 0 and options_data['Ask'] != 0]
+options_data['Mid'] = (options_data['Bid'] + options_data['Ask']) / 2
+idx_spot = options_data['Index Spot'].iloc[0]
 expiries = set(options_data["Expiration Date"])
 
 vol_data_dict = {exp: {} for exp in expiries}
@@ -220,6 +231,7 @@ strike_data_dict = {exp: {} for exp in expiries}
 time_to_exp_dict = {exp: calc_tte(exp) for exp in expiries}
 F = float(idx_spot)
 no_volume = input("Do you want to include options with no volume/OI? (y/n): ")
+vol_surface_method = input("Enter the interpolation method (linear, cubic, SVI: )")
 
 for expiry in expiries:
     options = options_data[options_data['Expiration Date'] == expiry]
@@ -247,5 +259,67 @@ for expiry in expiries:
 
         vol_data_dict[expiry] = volatilities
         strike_data_dict[expiry] = strikes
-    
+
 strike_range = np.linspace(min([min(v) for v in strike_data_dict.values()]) / F, max([max(v) for v in strike_data_dict.values()]) / F, 200)
+
+if vol_surface_method.lower() == "svi":
+    def svi_function(params, k):
+        a, b, rho, m, phi = params
+        return a + b * (rho * (k - m) + np.sqrt((k - m)**2 + phi**2))
+    
+    def svi_objective(params, k, iv_observed):
+        iv_fitted = svi_function(params, k)
+        return np.sum((iv_fitted - iv_observed)**2)
+
+    svi_params_dict = {}
+
+    for expiry, vols in vol_data_dict.items():
+        if len(vols) > 0:
+            # Prepare data
+            strikes = strike_data_dict[expiry]
+            k = np.log(strikes / F)  # Log-moneyness
+            iv_squared = np.array(vols)**2
+
+            # Initial guesses for parameters
+            initial_params = [0.1, 0.1, -0.5, 0.0, 0.1]
+
+            # Fit SVI
+            result = minimize(svi_objective, initial_params, args=(k, iv_squared), method='L-BFGS-B')
+            if result.success:
+                svi_params_dict[expiry] = result.x
+            else:
+                print(f"Failed to fit SVI for expiry {expiry}: {result.message}")
+
+    
+    # Create a grid of strikes and expirations
+    strike_grid, expiry_grid = np.meshgrid(strike_range, sorted(time_to_exp_dict.values()))
+    vol_surface = np.zeros_like(strike_grid)
+
+    # Calculate volatilities for each grid point
+    for i, T in enumerate(sorted(time_to_exp_dict.values())):
+        if T in time_to_exp_dict.values():
+            params = svi_params_dict[expiry]
+            k_grid = np.log(strike_grid[:, i] / F)  # Log-moneyness
+            vol_surface[:, i] = np.sqrt(svi_function(params, k_grid))
+
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    surf = ax.plot_surface(
+        strike_grid, expiry_grid, vol_surface,
+        cmap='viridis', edgecolor='none'
+    )
+
+    ax.set_title('SVI Volatility Surface')
+    ax.set_xlabel('Strike / Index Spot')
+    ax.set_ylabel('Time to Expiration (Years)')
+    ax.set_zlabel('Implied Volatility')
+    fig.colorbar(surf, shrink=0.5, aspect=5)
+    plt.show()
+
+
+
+
+
+
+    
