@@ -101,7 +101,7 @@ def main():
     r = 0.01  # Risk-free rate (adjust this as needed)
 
     # Choose expiry
-    expiry_choice = input("Enter the desired expiry (e.g., 2025-01-19): ")
+    expiry_choice = input(f"Enter the desired expiry (e.g., {options_data['Expiration Date'].iloc[0]}): ")
     expiry_data = options_data[options_data['Expiration Date'] == expiry_choice]
 
     if expiry_data.empty:

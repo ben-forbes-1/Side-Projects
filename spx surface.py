@@ -15,14 +15,15 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-
+import yfinance as yf
 
 def calc_tte(expiry):
     return (pd.to_datetime(expiry) - pd.Timestamp.today()).days / 365
 
 update = input("Do you want to update the option price data? (y/n): ")
+source = input("Do you want to use CBOE (SPX) or yfinance (SPY) as the data source? (CBOE/yfinance): ")
 
-if update.lower() == "y":
+if update.lower() == "y" and source.lower() =='cboe':
     # Set up Selenium WebDriver with custom download directory
     options = webdriver.ChromeOptions()
     download_dir = "./cboe_csvs"  # Directory to save downloaded CSVs
@@ -218,6 +219,45 @@ if update.lower() == "y":
                     print(f"Error deleting file {file_path}: {e}")
     else:
         print("No valid data to save.")
+
+elif update.lower() == "y" and source.lower() == 'yfinance':
+    TICKER = "SPY"
+    stock = yf.Ticker(TICKER)
+    expirations = stock.options
+    all_data = pd.DataFrame()
+
+    if not expirations:
+        raise ValueError("No options available for this stock")
+    
+    for expiry in expirations:
+        options_chain = stock.opton_chain(expiry)
+        calls = options_chain.calls
+        puts = options_chain.puts
+        
+        calls = calls[(calls['volume'] > 0) & (calls['openInterest'] > 0) & (calls['bid'] > 0) & (calls['ask'] > 0)]
+        puts = puts[(puts['volume'] > 0) & (puts['openInterest'] > 0) & (puts['bid'] > 0) & (puts['ask'] > 0)]
+
+        options = pd.concat([calls, puts])
+        all_data = pd.concat([all_data, options], ignore_index=True)
+
+    all_data['Expiration Date'] = pd.to_datetime(all_data['expiration'])
+    all_data['Index Spot'] = stock.history(period="1d").iloc[-1]["Close"]
+    all_data = all_data.sort_values(by=['Expiration Date', 'strike'])
+
+    if len(all_data.index) != 0:
+        final_df = all_data.copy()
+        final_df['Expiration Date'] = pd.to_datetime(final_df['Expiration Date'], format = '%a %b %d %Y')
+        final_df = final_df.sort_values(by=['Expiration Date', 'Strike'])
+
+        combined_csv_path = "spx_options_combined.csv"
+        if os.path.exists(combined_csv_path):
+            os.remove(combined_csv_path) # If the file already exists, delete it
+        final_df.to_csv(combined_csv_path, index=False)
+        print(f"Data saved to {combined_csv_path}")
+
+    else:
+        print("No valid data to save.")
+
 
 options_data = pd.read_csv("spx_options_combined.csv")
 options_data['TTE'] = (pd.to_datetime(options_data['Expiration Date']) - pd.Timestamp.today()).dt.days / 365
