@@ -79,7 +79,7 @@ if update.lower() == "y" and source.lower() =='cboe':
         driver.execute_script("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", dropdown)
         dropdown.click()
 
-        # Step 3: Type 'All' directly and press Enter
+        # Step 3: Type 'All' directly and press Enter to show all strikes
         actions = ActionChains(driver)
         actions.send_keys("All")  # Type 'All'
         actions.send_keys(Keys.RETURN)  # Press Enter
@@ -100,7 +100,7 @@ if update.lower() == "y" and source.lower() =='cboe':
 
     while True:
         try:
-            # Dynamically locate all expiration buttons
+            # Locate all expiration buttons
             expiration_buttons = wait.until(EC.presence_of_all_elements_located(
                 (By.XPATH, "//button[contains(@class, 'Button__StyledButton-cui__sc-1ahwe65-2')]")
             ))
@@ -173,7 +173,7 @@ if update.lower() == "y" and source.lower() =='cboe':
                         reader = csv.reader(f)
                         row1 = next(reader)  # gets the first (empty) line
                         row2 = next(reader) # gets the second line which contains the index
-                        idx_spot = row2[1].split(" ")[1]
+                        idx_spot = row2[1].split(" ")[1] # gets the index spot price
                     current_idx_flag = True
 
                 # Skip metadata rows and include all data
@@ -221,33 +221,31 @@ if update.lower() == "y" and source.lower() =='cboe':
         print("No valid data to save.")
 
 elif update.lower() == "y" and source.lower() == 'yfinance':
-    TICKER = "SPY"
-    stock = yf.Ticker(TICKER)
-    expirations = stock.options
+    TICKER = "SPY" # Ticker symbol for SPY
+    stock = yf.Ticker(TICKER) 
+    expirations = stock.options # Get all available expirations
     all_data = pd.DataFrame()
 
     if not expirations:
         raise ValueError("No options available for this stock")
     
     for expiry in expirations:
-        options_chain = stock.opton_chain(expiry)
+        options_chain = stock.option_chain(expiry)
         calls = options_chain.calls
         puts = options_chain.puts
         
         calls = calls[(calls['volume'] > 0) & (calls['openInterest'] > 0) & (calls['bid'] > 0) & (calls['ask'] > 0)]
         puts = puts[(puts['volume'] > 0) & (puts['openInterest'] > 0) & (puts['bid'] > 0) & (puts['ask'] > 0)]
 
-        options = pd.concat([calls, puts])
+        options = pd.concat([calls, puts]) # Combine calls and puts
+        options['Expiration Date'] = pd.to_datetime(expiry)
         all_data = pd.concat([all_data, options], ignore_index=True)
 
-    all_data['Expiration Date'] = pd.to_datetime(all_data['expiration'])
-    all_data['Index Spot'] = stock.history(period="1d").iloc[-1]["Close"]
-    all_data = all_data.sort_values(by=['Expiration Date', 'strike'])
+    all_data['Index Spot'] = stock.history(period="1d").iloc[-1]["Close"] # Get the latest closing price for SPY stock
+    all_data = all_data.sort_values(by=['Expiration Date', 'strike']) # Sort by expiration date and strike
 
     if len(all_data.index) != 0:
         final_df = all_data.copy()
-        final_df['Expiration Date'] = pd.to_datetime(final_df['Expiration Date'], format = '%a %b %d %Y')
-        final_df = final_df.sort_values(by=['Expiration Date', 'Strike'])
 
         combined_csv_path = "spx_options_combined.csv"
         if os.path.exists(combined_csv_path):
@@ -257,7 +255,6 @@ elif update.lower() == "y" and source.lower() == 'yfinance':
 
     else:
         print("No valid data to save.")
-
 
 options_data = pd.read_csv("spx_options_combined.csv")
 options_data['TTE'] = (pd.to_datetime(options_data['Expiration Date']) - pd.Timestamp.today()).dt.days / 365
