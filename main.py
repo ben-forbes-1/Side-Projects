@@ -20,3 +20,4 @@ if update_data == "y":
         logging.error("Invalid data source. Attempting to use yfinance as default.")
         yf_downloader = YFinanceDownloader()
         yf_downloader.download_data()
+
